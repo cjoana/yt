@@ -760,3 +760,61 @@ class ChomboPICDataset(ChomboDataset):
         except:
             pass
         return False
+
+
+class GRChomboHierarchy(ChomboHierarchy):
+
+    def __init__(self, ds, dataset_type="chombo_hdf5"):
+        ChomboHierarchy.__init__(self, ds, dataset_type)
+
+
+class GRChomboDataset(ChomboDataset):
+
+    # _index_class = GRChomboHierarchy                                              #TODO
+    # _field_info_class = GRChomboFieldInfo3D                                      #TODO
+
+    def __init__(self, filename, dataset_type='chombo_hdf5',
+                 storage_filename=None, ini_filename=None,
+                 units_override=None):
+
+        ChomboDataset.__init__(self, filename, dataset_type,
+                               storage_filename, ini_filename,
+                               units_override=units_override)
+
+    @classmethod
+    def _is_valid(self, *args, **kwargs):
+
+        warn_h5py(args[0])
+
+        if not is_chombo_hdf5(args[0]):
+            return False
+
+        pluto_ini_file_exists = False
+        orion2_ini_file_exists = False
+
+        if isinstance(args[0], six.string_types):
+            dir_name = os.path.dirname(os.path.abspath(args[0]))
+            pluto_ini_filename = os.path.join(dir_name, "pluto.ini")
+            orion2_ini_filename = os.path.join(dir_name, "orion2.ini")
+            pluto_ini_file_exists = os.path.isfile(pluto_ini_filename)
+            orion2_ini_file_exists = os.path.isfile(orion2_ini_filename)
+            # grchombo_ini_filename = os.path.join(dir_name, "grchombo.ini")
+            # grchombo_ini_file_exists = os.path.isfile(grchombo_ini_filename)
+
+        if orion2_ini_file_exists:
+            return False
+        if pluto_ini_file_exists:
+            return False
+
+        # if grchombo_ini_file_exists:
+        #     return False
+
+
+        try:
+            fileh = h5py.File(args[0], 'r')
+            valid = "Chombo_global" in fileh["/"]
+            fileh.close()
+            return valid
+        except:
+            pass
+        return False
