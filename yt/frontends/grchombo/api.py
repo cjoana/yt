@@ -22,7 +22,9 @@ from .data_structures import \
     ChomboPICHierarchy, \
     ChomboPICDataset, \
     PlutoHierarchy, \
-    PlutoDataset
+    PlutoDataset, \
+    GRChomboHierarchy, \
+    GRChomboDataset
 
 from .fields import \
     ChomboFieldInfo, \
@@ -30,7 +32,8 @@ from .fields import \
     ChomboPICFieldInfo1D, \
     ChomboPICFieldInfo2D, \
     ChomboPICFieldInfo3D, \
-    PlutoFieldInfo
+    PlutoFieldInfo, \
+    GRChomboFieldInfo
 
 from .io import \
     IOHandlerChomboHDF5

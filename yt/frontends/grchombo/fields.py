@@ -332,3 +332,9 @@ class PlutoFieldInfo(ChomboFieldInfo):
         from yt.fields.magnetic_field import \
             setup_magnetic_field_aliases
         setup_magnetic_field_aliases(self, "chombo", ["bx%s" % ax for ax in [1,2,3]])
+
+
+# GRChombo does not have any known fields by itself.
+class GRChomboFieldInfo(FieldInfoContainer):
+    known_other_fields = ()
+    known_particle_fields = ()

@@ -35,6 +35,7 @@ _frontends = [
     'gamer',
     'gdf',
     'gizmo',
+    'grchombo',
     'halo_catalog',
     'http_stream',
     'moab',
