@@ -45,6 +45,12 @@ from .fields import ChomboFieldInfo, Orion2FieldInfo, \
     ChomboPICFieldInfo1D, ChomboPICFieldInfo2D, ChomboPICFieldInfo3D, \
     PlutoFieldInfo
 
+# Additions for GRChombo
+
+from .definitions import setup_partial_derivative_fields
+
+# End additions
+
 
 def is_chombo_hdf5(fn):
     try:
@@ -257,7 +263,7 @@ class ChomboDataset(Dataset):
     _field_info_class = ChomboFieldInfo
 
     def __init__(self, filename, dataset_type='chombo_hdf5',
-                 storage_filename = None, ini_filename = None,
+                 storage_filename=None, ini_filename=None,
                  units_override=None, unit_system="cgs"):
         self.fluid_types += ("chombo",)
         self._handle = HDF5FileHandler(filename)
@@ -275,7 +281,7 @@ class ChomboDataset(Dataset):
         # These are parameters that I very much wish to get rid of.
         self.parameters["HydroMethod"] = 'chombo'
         self.parameters["DualEnergyFormalism"] = 0 
-        self.parameters["EOSType"] = -1 # default
+        self.parameters["EOSType"] = -1  # default
 
     def _set_code_unit_attributes(self):
         if not hasattr(self, 'length_unit'):
@@ -770,16 +776,21 @@ class GRChomboHierarchy(ChomboHierarchy):
 
 class GRChomboDataset(ChomboDataset):
 
-    # _index_class = GRChomboHierarchy                                              #TODO
+    # _index_class = GRChomboHierarchy                                             #TODO
     # _field_info_class = GRChomboFieldInfo3D                                      #TODO
+
+    units_override = {"length_unit": (1.0, "l_pl"),
+                      "time_unit": (1.0, "t_pl"),
+                      "mass_unit": (1.0, "m_pl")}
+    unit_system = 'planck'
 
     def __init__(self, filename, dataset_type='chombo_hdf5',
                  storage_filename=None, ini_filename=None,
-                 units_override=None):
+                 units_override=units_override, unit_system=unit_system):
 
         ChomboDataset.__init__(self, filename, dataset_type,
                                storage_filename, ini_filename,
-                               units_override=units_override)
+                               units_override=units_override, unit_system=unit_system)
 
     @classmethod
     def _is_valid(self, *args, **kwargs):
@@ -818,3 +829,205 @@ class GRChomboDataset(ChomboDataset):
         except:
             pass
         return False
+
+
+    def add_partial_derivative_fields(self, input_field):
+        """Add gradient fields.
+
+        Creates four new grid-based fields that represent the components of
+        the gradient of an existing field, plus an extra field for the magnitude
+        of the gradient. Currently only supported in Cartesian geometries. The
+        gradient is computed using second-order centered differences.
+
+        Parameters
+        ----------
+        input_field : tuple
+           The field name tuple of the particle field the deposited field will
+           be created from.  This must be a field name tuple so yt can
+           appropriately infer the correct field type.
+
+        Returns
+        -------
+        A list of field name tuples for the newly created fields.
+
+        Examples
+        --------
+        >>> grad_fields = ds.add_gradient_fields(("chombo","chi"))
+        >>> print(grad_fields)
+        [('chombo', 'chi_partial_dx'),
+         ('chombo', 'chi_partial_dy'),
+         ('chombo', 'chi_partial_dz')]
+        """
+        # ('chombo', 'chi_partial_derivative_magnitude')]
+
+        self.index
+        if isinstance(input_field, tuple):
+            ftype, input_field = input_field[0], input_field[1]
+        else:
+            raise RuntimeError
+        units = self.field_info[ftype, input_field].units
+        setup_partial_derivative_fields(self.field_info, (ftype, input_field), units)
+        # Now we make a list of the fields that were just made, to check them
+        # and to return them
+        grad_fields = [(ftype, input_field + "_partial_d%s" % suffix)
+                       for suffix in "xyz"]
+        # grad_fields.append((ftype, input_field + "_partial_magnitude"))
+        deps, _ = self.field_info.check_derived_fields(grad_fields)
+        self.field_dependencies.update(deps)
+        return grad_fields
+
+
+    def _get_components(self):
+        atts = self._handle['/'].attrs
+        num_com = self._handle['/'].attrs['num_components']
+
+        return np.array([atts['component_{}'.format(i)] for i in range(int(num_com))], dtype=str)
+
+
+    def _get_domain(self):
+        domain = dict()
+        domain['N'] = self.domain_dimensions
+        domain['L'] = self.domain_width[0]
+        domain['L0'] = 0
+        domain['dt'] = self._handle['/level_0'].attrs['dt']
+        domain['dt_multiplier'] = float(domain['N'][0] / domain['L'] * domain['dt'])
+
+        return domain
+
+
+    def _get_data(self, fields, domain='default', res='default'):
+
+        if domain is 'default':
+            domain = self._get_domain()
+
+        if res is 'default':
+            res = domain['N'] * 1j
+        else:
+            res = res * 1j
+
+        L = domain['L']
+        if 'L0' not in domain.keys(): domain['L0'] = 0
+        L0 = domain['L0']
+
+        dset = dict()
+        reg = self.r[L0:L:res[0], L0:L:res[1], L0:L:res[2]]
+        for i, field in enumerate(fields):
+            dset[field] = reg[field]
+
+        return dset
+
+
+    def create_dataset_level0(self,
+                              filename, component_names='default', data='default',
+                              domain='default',
+                              overwrite=False):
+        import h5py as h5
+        import os
+
+        if component_names is 'default':
+            component_names = self._get_components()
+        if domain is 'default':
+            domain = self._get_domain()
+        if data is 'default':
+            data = self._get_data(component_names)
+
+        N = int(domain['N'][0])
+        L = domain['L']
+        dt_multiplier = domain['dt_multiplier']
+
+        """
+        Mesh and Other Params
+        """
+        # def base attributes
+        base_attrb = dict()
+        base_attrb['time'] = self._handle['/'].attrs['time']
+        base_attrb['iteration'] = self._handle['/'].attrs['iteration']
+        base_attrb['max_level'] = self._handle['/'].attrs['max_level']
+        base_attrb['num_components'] = len(component_names)
+        base_attrb['num_levels'] = 1
+        base_attrb['regrid_interval_0'] = 1
+        base_attrb['steps_since_regrid_0'] = 0
+        for comp, name in enumerate(component_names):
+            key = 'component_' + str(comp)
+            tt = 'S' + str(len(name))
+            base_attrb[key] = np.array(name, dtype=tt)
+
+        # def Chombo_global attributes
+        chombogloba_attrb = dict()
+        chombogloba_attrb['testReal'] = self._handle['/Chombo_global'].attrs['testReal']
+        chombogloba_attrb['SpaceDim'] = self._handle['/Chombo_global'].attrs['SpaceDim']
+
+        # def level0 attributes
+        level_attrb = dict()
+        level_attrb['dt'] = float(L) / N * dt_multiplier
+        level_attrb['dx'] = float(L) / N
+        level_attrb['time'] = self._handle['/level_0'].attrs['time']
+        level_attrb['is_periodic_0'] = self._handle['/level_0'].attrs['is_periodic_0']
+        level_attrb['is_periodic_1'] = self._handle['/level_0'].attrs['is_periodic_1']
+        level_attrb['is_periodic_2'] = self._handle['/level_0'].attrs['is_periodic_2']
+        level_attrb['ref_ratio'] = self._handle['/level_0'].attrs['ref_ratio']
+        level_attrb['tag_buffer_size'] = self._handle['/level_0'].attrs['tag_buffer_size']
+        prob_dom = (0, 0, 0, N - 1, N - 1, N - 1)
+        prob_dt = np.dtype([('lo_i', '<i4'), ('lo_j', '<i4'), ('lo_k', '<i4'),
+                            ('hi_i', '<i4'), ('hi_j', '<i4'), ('hi_k', '<i4')])
+        level_attrb['prob_domain'] = np.array(prob_dom, dtype=prob_dt)
+        boxes = np.array([(0, 0, 0, N - 1, N - 1, N - 1)],
+                         dtype=[('lo_i', '<i4'), ('lo_j', '<i4'), ('lo_k', '<i4'), ('hi_i', '<i4'), ('hi_j', '<i4'),
+                                ('hi_k', '<i4')])
+
+        """"
+        CREATE HDF5
+        """
+
+        if overwrite:
+            if os.path.exists(filename):
+                os.remove(filename)
+        else:
+            if os.path.exists(filename):
+                raise Exception(">> The file already exists, and set not to overwrite.")
+
+        h5file = h5.File(filename, 'w')  # New hdf5 file I want to create
+
+        # base attributes
+        for key in base_attrb.keys():
+            h5file.attrs[key] = base_attrb[key]
+
+        # group: Chombo_global
+        chg = h5file.create_group('Chombo_global')
+        for key in chombogloba_attrb.keys():
+            chg.attrs[key] = chombogloba_attrb[key]
+
+        # group: levels
+        l0 = h5file.create_group('level_0')
+        for key in level_attrb.keys():
+            l0.attrs[key] = level_attrb[key]
+        sl0 = l0.create_group('data_attributes')
+        dadt = np.dtype([('intvecti', '<i4'), ('intvectj', '<i4'), ('intvectk', '<i4')])
+        sl0.attrs['ghost'] = np.array((3, 3, 3), dtype=dadt)
+        sl0.attrs['outputGhost'] = np.array((0, 0, 0), dtype=dadt)
+        sl0.attrs['comps'] = base_attrb['num_components']
+        sl0.attrs['objectType'] = np.array('FArrayBox', dtype='S9')
+
+        # level datasets
+        dataset = np.zeros((base_attrb['num_components'], N, N, N))
+        for i, comp in enumerate(component_names):
+            if comp in data.keys():
+                dataset[i] = data[comp].T
+            else:
+                raise Exception(">> Component {} not found in the data dictionary".format(comp))
+        fdset = []
+        for c in range(base_attrb['num_components']):
+            fc = dataset[c].T.flatten()
+            fdset.extend(fc)
+        fdset = np.array(fdset)
+
+        l0.create_dataset("Processors", data=np.array([0]))
+        l0.create_dataset("boxes", data=boxes)
+        l0.create_dataset("data:offsets=0", data=np.array([0, (base_attrb['num_components']) * N ** 3]))
+        l0.create_dataset("data:datatype=0", data=fdset)
+
+        h5file.close()
+
+        return
+
+    #

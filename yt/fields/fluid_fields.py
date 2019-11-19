@@ -17,17 +17,17 @@ import numpy as np
 
 from yt.units.unit_object import Unit
 
-from .derived_field import \
+from yt.fields.derived_field import \
     ValidateSpatial, \
     ValidateParameter
 
-from .field_plugin_registry import \
+from yt.fields.field_plugin_registry import \
     register_field_plugin
 
 from yt.geometry.geometry_handler import \
     is_curvilinear
 
-from .vector_operations import \
+from yt.fields.vector_operations import \
     create_averaged_field, \
     create_magnitude_field, \
     create_vector_fields
