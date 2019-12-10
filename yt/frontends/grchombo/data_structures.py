@@ -887,10 +887,10 @@ class GRChomboDataset(ChomboDataset):
     def _get_domain(self):
         domain = dict()
         domain['N'] = self.domain_dimensions
-        domain['L'] = self.domain_width[0]
-        domain['L0'] = 0
+        domain['L'] = self.domain_width
+        domain['L0'] = np.array([0, 0, 0])
         domain['dt'] = self._handle['/level_0'].attrs['dt']
-        domain['dt_multiplier'] = float(domain['N'][0] / domain['L'] * domain['dt'])
+        domain['dt_multiplier'] = float(domain['N'][0] / domain['L'][0] * domain['dt'])
 
         return domain
 
@@ -906,11 +906,11 @@ class GRChomboDataset(ChomboDataset):
             res = res * 1j
 
         L = domain['L']
-        if 'L0' not in domain.keys(): domain['L0'] = 0
+        if 'L0' not in domain.keys(): domain['L0'] = np.array([0, 0, 0])
         L0 = domain['L0']
 
         dset = dict()
-        reg = self.r[L0:L:res[0], L0:L:res[1], L0:L:res[2]]
+        reg = self.r[L0[0]:L[0]:res[0], L0[1]:L[1]:res[1], L0[2]:L[2]:res[2]]
         for i, field in enumerate(fields):
             dset[field] = reg[field]
 
@@ -924,15 +924,16 @@ class GRChomboDataset(ChomboDataset):
         import h5py as h5
         import os
 
-        if component_names is 'default':
+        if isinstance(component_names, str):
             component_names = self._get_components()
-        if domain is 'default':
+        if domain == 'default':
             domain = self._get_domain()
-        if data is 'default':
+        if data == 'default':
             data = self._get_data(component_names)
 
         N = int(domain['N'][0])
-        L = domain['L']
+        if 'L0' not in domain.keys(): domain['L0'] = np.array([0, 0, 0])
+        L = np.max(domain['L'] - domain['L0'])
         dt_multiplier = domain['dt_multiplier']
 
         """
